@@ -36,6 +36,25 @@ func (p *progressLogger) drawProgress(to io.Writer, db uint8, nDumped int) {
 	fmt.Fprintf(to, "\rDatabase %d: %d element dumped", db, nDumped)
 }
 
+type syncWriter struct {
+	writer io.Writer
+	mu     *sync.Mutex
+}
+
+func NewSyncWriter(writer io.Writer) *syncWriter {
+	w := &syncWriter{}
+	w.writer = writer
+	w.mu = &sync.Mutex{}
+
+	return w
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writer.Write(p)
+}
+
 func realMain() int {
 	var err error
 
@@ -60,8 +79,8 @@ func realMain() int {
 		tlshandler = redisdump.NewTlsHandler(c.CaCert, c.Cert, c.Key)
 	}
 
-	var serializer func([]string) string
-	switch c.Output {
+	var serializer func([]string) []byte
+	switch c.Format {
 	case "resp":
 		serializer = redisdump.RESPSerializer
 
@@ -70,6 +89,18 @@ func realMain() int {
 
 	default:
 		log.Fatalf("Failed parsing parameter flag: can only be resp or json")
+	}
+
+	var writer io.Writer
+	if c.Output != "" {
+		file, err := os.OpenFile(c.Output, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatalf("Failed open file %s : %s", c.Output, err.Error())
+		}
+		defer file.Close()
+		writer = file
+	} else {
+		writer = os.Stdout
 	}
 
 	redisPassword := os.Getenv("REDISDUMPGO_AUTH")
@@ -96,8 +127,6 @@ func realMain() int {
 		wg.Done()
 	}()
 
-	logger := log.New(os.Stdout, "", 0)
-
 	var db = new(uint8)
 	// If the user passed a db as parameter, we only dump that db
 	if c.Db >= 0 {
@@ -113,7 +142,7 @@ func realMain() int {
 		TlsHandler: tlshandler,
 	}
 
-	if err = redisdump.DumpServer(s, db, c.Filter, c.NWorkers, c.WithTTL, c.BatchSize, c.Noscan, logger, serializer, progressNotifs); err != nil {
+	if err = redisdump.DumpServer(s, db, c.Filter, c.NWorkers, c.WithTTL, c.BatchSize, c.Noscan, NewSyncWriter(writer), serializer, progressNotifs); err != nil {
 		fmt.Fprintf(os.Stderr, "%s", err)
 		return 1
 	}

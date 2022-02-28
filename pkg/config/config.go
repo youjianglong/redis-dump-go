@@ -16,6 +16,7 @@ type Config struct {
 	NWorkers  int
 	WithTTL   bool
 	Output    string
+	Format    string
 	Silent    bool
 	Tls       bool
 	CaCert    string
@@ -49,7 +50,8 @@ func FromFlags(progName string, args []string) (Config, string, error) {
 	flags.IntVar(&c.BatchSize, "batchSize", 1000, "HSET/RPUSH/SADD/ZADD only add 'batchSize' items at a time")
 	flags.IntVar(&c.NWorkers, "n", 10, "Parallel workers")
 	flags.BoolVar(&c.WithTTL, "ttl", true, "Preserve Keys TTL")
-	flags.StringVar(&c.Output, "output", "resp", "Output type - can be resp or commands")
+	flags.StringVar(&c.Format, "fmt", "resp", "Output format - can be resp or commands")
+	flags.StringVar(&c.Output, "out", "resp", "Output file path")
 	flags.BoolVar(&c.Silent, "s", false, "Silent mode (disable logging of progress / stats)")
 	flags.BoolVar(&c.Tls, "tls", false, "Establish a secure TLS connection")
 	flags.StringVar(&c.CaCert, "cacert", "", "CA Certificate file to verify with")

@@ -2,8 +2,9 @@ package redisdump
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -22,109 +23,104 @@ func stringToRedisCmd(k, val string) []string {
 	return []string{"SET", k, val}
 }
 
-func hashToRedisCmds(hashKey string, val map[string]string, batchSize int) [][]string {
-	cmds := [][]string{}
+func hashToRedisCmds(client radix.Client, hashKey string, batchSize int, writer io.Writer, serializer Serializer) error {
+	scanner := radix.NewScanner(client, radix.ScanOpts{Command: "HSCAN", Key: hashKey, Count: batchSize})
+	defer scanner.Close()
 
-	cmd := []string{"HSET", hashKey}
-	n := 0
-	for k, v := range val {
-		if n >= batchSize {
-			n = 0
-			cmds = append(cmds, cmd)
-			cmd = []string{"HSET", hashKey}
+	var key, value string
+	for scanner.Next(&key) && scanner.Next(&value) {
+		cmd := []string{"HSET", hashKey, key, value}
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
 		}
-		cmd = append(cmd, k, v)
-		n++
 	}
-
-	if n > 0 {
-		cmds = append(cmds, cmd)
-	}
-
-	return cmds
+	return nil
 }
 
-func setToRedisCmds(setKey string, val []string, batchSize int) [][]string {
-	cmds := [][]string{}
+func setToRedisCmds(client radix.Client, setKey string, batchSize int, writer io.Writer, serializer Serializer) error {
+	scanner := radix.NewScanner(client, radix.ScanOpts{Command: "SSCAN", Key: setKey, Count: batchSize})
+	defer scanner.Close()
 	cmd := []string{"SADD", setKey}
 	n := 0
-	for _, v := range val {
-		if n >= batchSize {
-			n = 0
-			cmds = append(cmds, cmd)
-			cmd = []string{"SADD", setKey}
+	var val string
+	for scanner.Next(&val) {
+		cmd = append(cmd, val)
+		if n < batchSize {
+			n++
+			continue
 		}
-		cmd = append(cmd, v)
-		n++
+		n = 0
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
+		}
+		cmd = []string{"SADD", setKey}
 	}
-
-	if n > 0 {
-		cmds = append(cmds, cmd)
+	if len(cmd) > 2 {
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
+		}
 	}
-
-	return cmds
+	return nil
 }
 
-func listToRedisCmds(listKey string, val []string, batchSize int) [][]string {
-	cmds := [][]string{}
-	cmd := []string{"RPUSH", listKey}
-	n := 0
-	for _, v := range val {
-		if n >= batchSize {
-			n = 0
-			cmds = append(cmds, cmd)
-			cmd = []string{"RPUSH", listKey}
+func listToRedisCmds(client radix.Client, cmd radixCmder, listKey string, batchSize int, writer io.Writer, serializer Serializer) error {
+	start := 0
+	for {
+		end := start + batchSize - 1
+		val := []string{}
+		if err := client.Do(cmd(&val, "LRANGE", listKey, strconv.Itoa(start), strconv.Itoa(end))); err != nil {
+			return err
 		}
-		cmd = append(cmd, v)
-		n++
+		start = end + 1
+		if len(val) < 1 {
+			break
+		}
+		cmd := []string{"RPUSH", listKey}
+		cmd = append(cmd, val...)
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
+		}
 	}
-
-	if n > 0 {
-		cmds = append(cmds, cmd)
-	}
-
-	return cmds
+	return nil
 }
 
 // We break down large ZSETs to multiple ZADD commands
 
-func zsetToRedisCmds(zsetKey string, val []string, batchSize int) [][]string {
-	cmds := [][]string{}
-	var key string
-
+func zsetToRedisCmds(client radix.Client, zsetKey string, batchSize int, writer io.Writer, serializer Serializer) error {
+	scanner := radix.NewScanner(client, radix.ScanOpts{Command: "ZSCAN", Key: zsetKey, Count: batchSize})
+	defer scanner.Close()
 	cmd := []string{"ZADD", zsetKey}
 	n := 0
-	for i, v := range val {
-		if i%2 == 0 {
-			key = v
+	var member, score string
+	for scanner.Next(&member) && scanner.Next(&score) {
+		cmd = append(cmd, score, member)
+		if n < batchSize {
+			n++
 			continue
 		}
-
-		if n >= batchSize {
-			n = 0
-			cmds = append(cmds, cmd)
-			cmd = []string{"ZADD", zsetKey}
+		n = 0
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
 		}
-		cmd = append(cmd, v, key)
-		n++
+		cmd = []string{"ZADD", zsetKey}
 	}
-
-	if n > 0 {
-		cmds = append(cmds, cmd)
+	if len(cmd) > 2 {
+		if _, err := writer.Write(serializer(cmd)); err != nil {
+			return err
+		}
 	}
-
-	return cmds
+	return nil
 }
 
-type Serializer func([]string) string
+type Serializer func([]string) []byte
 
 // RedisCmdSerializer will serialize cmd to a string with redis commands
-func RedisCmdSerializer(cmd []string) string {
+func RedisCmdSerializer(cmd []string) []byte {
 	if len(cmd) == 0 {
-		return ""
+		return nil
 	}
 
-	buf := strings.Builder{}
+	buf := &bytes.Buffer{}
 	buf.WriteString(fmt.Sprintf("%s", cmd[0]))
 	for i := 1; i < len(cmd); i++ {
 		if strings.Contains(cmd[i], " ") {
@@ -133,26 +129,24 @@ func RedisCmdSerializer(cmd []string) string {
 			buf.WriteString(fmt.Sprintf(" %s", cmd[i]))
 		}
 	}
-
-	return buf.String()
+	buf.WriteByte('\n')
+	return buf.Bytes()
 }
 
 // RESPSerializer will serialize cmd to RESP
-func RESPSerializer(cmd []string) string {
-	buf := strings.Builder{}
+func RESPSerializer(cmd []string) []byte {
+	buf := &bytes.Buffer{}
 	buf.WriteString("*" + strconv.Itoa(len(cmd)) + "\r\n")
 	for _, arg := range cmd {
 		buf.WriteString("$" + strconv.Itoa(len(arg)) + "\r\n" + arg + "\r\n")
 	}
-	return buf.String()
+	return buf.Bytes()
 }
 
 type radixCmder func(rcv interface{}, cmd string, args ...string) radix.CmdAction
 
-func dumpKeys(client radix.Client, cmd radixCmder, keys []string, withTTL bool, batchSize int, logger *log.Logger, serializer Serializer) error {
+func dumpKeys(client radix.Client, cmd radixCmder, keys []string, withTTL bool, batchSize int, writer io.Writer, serializer Serializer) error {
 	var err error
-	var redisCmds [][]string
-
 	for _, key := range keys {
 		keyType := ""
 
@@ -166,44 +160,28 @@ func dumpKeys(client radix.Client, cmd radixCmder, keys []string, withTTL bool, 
 			if err = client.Do(cmd(&val, "GET", key)); err != nil {
 				return err
 			}
-			redisCmds = [][]string{stringToRedisCmd(key, val)}
+			_, err = writer.Write(serializer(stringToRedisCmd(key, val)))
 
 		case "list":
-			var val []string
-			if err = client.Do(cmd(&val, "LRANGE", key, "0", "-1")); err != nil {
-				return err
-			}
-			redisCmds = listToRedisCmds(key, val, batchSize)
+			err = listToRedisCmds(client, cmd, key, batchSize, writer, serializer)
 
 		case "set":
-			var val []string
-			if err = client.Do(cmd(&val, "SMEMBERS", key)); err != nil {
-				return err
-			}
-			redisCmds = setToRedisCmds(key, val, batchSize)
+			err = setToRedisCmds(client, key, batchSize, writer, serializer)
 
 		case "hash":
-			var val map[string]string
-			if err = client.Do(cmd(&val, "HGETALL", key)); err != nil {
-				return err
-			}
-			redisCmds = hashToRedisCmds(key, val, batchSize)
+			err = hashToRedisCmds(client, key, batchSize, writer, serializer)
 
 		case "zset":
-			var val []string
-			if err = client.Do(cmd(&val, "ZRANGEBYSCORE", key, "-inf", "+inf", "WITHSCORES")); err != nil {
-				return err
-			}
-			redisCmds = zsetToRedisCmds(key, val, batchSize)
+			err = zsetToRedisCmds(client, key, batchSize, writer, serializer)
 
 		case "none":
 
 		default:
-			return fmt.Errorf("Key %s is of unreconized type %s", key, keyType)
+			err = fmt.Errorf("Key %s is of unreconized type %s", key, keyType)
 		}
 
-		for _, redisCmd := range redisCmds {
-			logger.Print(serializer(redisCmd))
+		if err != nil {
+			return err
 		}
 
 		if withTTL {
@@ -213,7 +191,7 @@ func dumpKeys(client radix.Client, cmd radixCmder, keys []string, withTTL bool, 
 			}
 			if ttl > 0 {
 				cmd := ttlToRedisCmd(key, ttl)
-				logger.Print(serializer(cmd))
+				writer.Write(serializer(cmd))
 			}
 		}
 	}
@@ -221,9 +199,9 @@ func dumpKeys(client radix.Client, cmd radixCmder, keys []string, withTTL bool, 
 	return nil
 }
 
-func dumpKeysWorker(client radix.Client, keyBatches <-chan []string, withTTL bool, batchSize int, logger *log.Logger, serializer Serializer, errors chan<- error, done chan<- bool) {
+func dumpKeysWorker(client radix.Client, keyBatches <-chan []string, withTTL bool, batchSize int, writer io.Writer, serializer Serializer, errors chan<- error, done chan<- bool) {
 	for keyBatch := range keyBatches {
-		if err := dumpKeys(client, radix.Cmd, keyBatch, withTTL, batchSize, logger, serializer); err != nil {
+		if err := dumpKeys(client, radix.Cmd, keyBatch, withTTL, batchSize, writer, serializer); err != nil {
 			errors <- err
 		}
 	}
@@ -349,7 +327,7 @@ func redisDialOpts(redisPassword string, tlsHandler *TlsHandler, db *uint8) ([]r
 	return dialOpts, nil
 }
 
-func dumpDB(client radix.Client, db *uint8, filter string, nWorkers int, withTTL bool, batchSize int, noscan bool, logger *log.Logger, serializer Serializer, progress chan<- ProgressNotification) error {
+func dumpDB(client radix.Client, db *uint8, filter string, nWorkers int, withTTL bool, batchSize int, noscan bool, writer io.Writer, serializer Serializer, progress chan<- ProgressNotification) error {
 	keyGenerator := scanKeys
 	if noscan {
 		keyGenerator = scanKeysLegacy
@@ -367,7 +345,7 @@ func dumpDB(client radix.Client, db *uint8, filter string, nWorkers int, withTTL
 	done := make(chan bool)
 	keyBatches := make(chan []string)
 	for i := 0; i < nWorkers; i++ {
-		go dumpKeysWorker(client, keyBatches, withTTL, batchSize, logger, serializer, errors, done)
+		go dumpKeysWorker(client, keyBatches, withTTL, batchSize, writer, serializer, errors, done)
 	}
 
 	keyGenerator(client, radix.Cmd, *db, 100, filter, keyBatches, progress)
@@ -390,7 +368,7 @@ type Host struct {
 // DumpServer dumps all Keys from the redis server given by redisURL,
 // to the Logger logger. Progress notification informations
 // are regularly sent to the channel progressNotifications
-func DumpServer(s Host, db *uint8, filter string, nWorkers int, withTTL bool, batchSize int, noscan bool, logger *log.Logger, serializer func([]string) string, progress chan<- ProgressNotification) error {
+func DumpServer(s Host, db *uint8, filter string, nWorkers int, withTTL bool, batchSize int, noscan bool, writer io.Writer, serializer Serializer, progress chan<- ProgressNotification) error {
 	redisURL := RedisURL(s.Host, fmt.Sprint(s.Port))
 	getConnFunc := func(db *uint8) func(network, addr string) (radix.Conn, error) {
 		return func(network, addr string) (radix.Conn, error) {
@@ -426,7 +404,7 @@ func DumpServer(s Host, db *uint8, filter string, nWorkers int, withTTL bool, ba
 		}
 		defer client.Close()
 
-		if err = dumpDB(client, &db, filter, nWorkers, withTTL, batchSize, noscan, logger, serializer, progress); err != nil {
+		if err = dumpDB(client, &db, filter, nWorkers, withTTL, batchSize, noscan, writer, serializer, progress); err != nil {
 			return err
 		}
 	}

@@ -20,7 +20,7 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 1000,
 				NWorkers:  10,
 				WithTTL:   true,
-				Output:    "resp",
+				Format:    "resp",
 			},
 		},
 		{
@@ -33,7 +33,7 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 1000,
 				NWorkers:  10,
 				WithTTL:   true,
-				Output:    "resp",
+				Format:    "resp",
 			},
 		},
 		{
@@ -46,11 +46,11 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 1000,
 				NWorkers:  10,
 				WithTTL:   false,
-				Output:    "resp",
+				Format:    "resp",
 			},
 		},
 		{
-			[]string{"-host", "redis", "-port", "1234", "-batchSize", "10", "-n", "5", "-output", "commands"},
+			[]string{"-host", "redis", "-port", "1234", "-batchSize", "10", "-n", "5", "-fmt", "commands"},
 			Config{
 				Db:        -1,
 				Host:      "redis",
@@ -59,7 +59,7 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 10,
 				NWorkers:  5,
 				WithTTL:   true,
-				Output:    "commands",
+				Format:    "commands",
 			},
 		},
 		{
@@ -72,7 +72,7 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 1000,
 				NWorkers:  10,
 				WithTTL:   true,
-				Output:    "resp",
+				Format:    "resp",
 			},
 		},
 		{
@@ -85,7 +85,7 @@ func TestFromFlags(t *testing.T) {
 				BatchSize: 1000,
 				NWorkers:  10,
 				WithTTL:   true,
-				Output:    "resp",
+				Format:    "resp",
 				Help:      true,
 			},
 		},
