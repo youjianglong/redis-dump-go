@@ -103,8 +103,6 @@ func realMain() int {
 		writer = os.Stdout
 	}
 
-	redisPassword := os.Getenv("REDISDUMPGO_AUTH")
-
 	progressNotifs := make(chan redisdump.ProgressNotification)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -138,7 +136,7 @@ func realMain() int {
 	s := redisdump.Host{
 		Host:       c.Host,
 		Port:       c.Port,
-		Password:   url.QueryEscape(redisPassword),
+		Password:   url.QueryEscape(c.Password),
 		TlsHandler: tlshandler,
 	}
 
