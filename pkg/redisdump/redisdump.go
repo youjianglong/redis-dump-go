@@ -305,12 +305,12 @@ func RedisURL(redisHost string, redisPort string) string {
 	return fmt.Sprintf("redis://%s:%s", redisHost, redisPort)
 }
 
-func redisDialOpts(redisPassword string, tlsHandler *TlsHandler, db *uint8) ([]radix.DialOpt, error) {
+func redisDialOpts(redisUser, redisPassword string, tlsHandler *TlsHandler, db *uint8) ([]radix.DialOpt, error) {
 	dialOpts := []radix.DialOpt{
 		radix.DialTimeout(5 * time.Minute),
 	}
 	if redisPassword != "" {
-		dialOpts = append(dialOpts, radix.DialAuthPass(redisPassword))
+		dialOpts = append(dialOpts, radix.DialAuthUser(redisUser, redisPassword))
 	}
 	if tlsHandler != nil {
 		tlsCfg, err := tlsConfig(tlsHandler)
@@ -361,6 +361,7 @@ func dumpDB(client radix.Client, db *uint8, filter string, nWorkers int, withTTL
 type Host struct {
 	Host       string
 	Port       int
+	User       string
 	Password   string
 	TlsHandler *TlsHandler
 }
@@ -372,7 +373,7 @@ func DumpServer(s Host, db *uint8, filter string, nWorkers int, withTTL bool, ba
 	redisURL := RedisURL(s.Host, fmt.Sprint(s.Port))
 	getConnFunc := func(db *uint8) func(network, addr string) (radix.Conn, error) {
 		return func(network, addr string) (radix.Conn, error) {
-			dialOpts, err := redisDialOpts(s.Password, s.TlsHandler, db)
+			dialOpts, err := redisDialOpts(s.User, s.Password, s.TlsHandler, db)
 			if err != nil {
 				return nil, err
 			}

@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Host      string
 	Port      int
+	User      string
 	Password  string
 	Db        int
 	Filter    string
@@ -46,6 +47,7 @@ func FromFlags(progName string, args []string) (Config, string, error) {
 
 	flags.StringVar(&c.Host, "host", "127.0.0.1", "Server host")
 	flags.IntVar(&c.Port, "port", 6379, "Server port")
+	flags.StringVar(&c.User, "user", "", "Auth user")
 	flags.StringVar(&c.Password, "password", "", "Auth password")
 	flags.IntVar(&c.Db, "db", -1, "only dump this database (default: all databases)")
 	flags.StringVar(&c.Filter, "filter", "*", "Key filter to use")

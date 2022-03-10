@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/url"
 	"os"
 	"sync"
 
@@ -136,7 +135,8 @@ func realMain() int {
 	s := redisdump.Host{
 		Host:       c.Host,
 		Port:       c.Port,
-		Password:   url.QueryEscape(c.Password),
+		User:       c.User,
+		Password:   c.Password,
 		TlsHandler: tlshandler,
 	}
 
