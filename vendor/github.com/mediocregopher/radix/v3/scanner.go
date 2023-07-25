@@ -105,9 +105,7 @@ func (s *scanner) Next(res *string) bool {
 		for s.resIdx < len(s.res.keys) {
 			*res = s.res.keys[s.resIdx]
 			s.resIdx++
-			if *res != "" {
-				return true
-			}
+			return true
 		}
 
 		if s.res.cur == "0" && s.res.keys != nil {
